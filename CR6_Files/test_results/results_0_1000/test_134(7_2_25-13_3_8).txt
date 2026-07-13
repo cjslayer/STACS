@@ -1,0 +1,19 @@
+*****************************************************
+==================== TEST RESULTS ===================
+*****************************************************
+Info 1 :
+Info 2 :
+Lab :
+User :
+Test No :134
+Test Start Date :07.02.2025
+Test Start Time :13:03:08
+Test Finish Time :13:04:24
+Numerator :44
+Test Type :COMPRESSION
+Specimen :CYLINDER
+Dimensions (in) :4x8
+Area (in2) :12.566
+Peak Load (lbf) :30031.512
+Peak Stress (psi) :2389.832
+Test Speed (lbf/s) :439.810

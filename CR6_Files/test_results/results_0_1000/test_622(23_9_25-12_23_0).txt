@@ -1,0 +1,19 @@
+*****************************************************
+==================== TEST RESULTS ===================
+*****************************************************
+Info 1 :
+Info 2 :
+Lab :
+User :
+Test No :622
+Test Start Date :23.09.2025
+Test Start Time :12:23:00
+Test Finish Time :12:24:01
+Numerator :70
+Test Type :FLEXURAL
+Specimen :BEAM-4P
+Dimensions (in) :18x6x6
+Area (in2) :12.000
+Peak Load (lbf) :7263.112
+Peak Stress (psi) :605.259
+Test Speed (lbf/s) :30.000

@@ -1,0 +1,178 @@
+'CR6 Series
+'Created by Short Cut (4.0)
+
+'Declare Variables and Units
+Public BattV
+Public FCLoaded
+Public PTemp_C
+Public Load_2076
+Public CMult
+Public COff
+Public CKnown
+Public CReps
+Public ZMode
+Public MOMode
+Public CIndex
+Public CAvg
+Public CReps_2
+Public MOMode_2
+Public CIndex_2
+Public CAvg_2
+Public LCount_2
+Public HalfBr(8)
+Public CMult_2(8)
+Public COff_2(8)
+Public CKnown_2(8)
+Public Group_A
+Public CDM1BattV
+Public CDMPTempC(4)
+Public CReps_3
+Public MOMode_3
+Public CIndex_3
+Public CAvg_3
+Public LCount_3
+Public HalfBr_2(4)
+Public CMult_3(4)
+Public COff_3(4)
+Public CKnown_3(4)
+Public Group_C
+Public Mult_2(8)={1,1,1,1,1,1,1,1}
+Public Offs_2(8)={0,0,0,0,0,0,0,0}
+Public Mult_3(4)={1,1,1,1}
+Public Offs_3(4)={0,0,0,0}
+
+Alias HalfBr(1)=P1
+Alias HalfBr(2)=P2
+Alias HalfBr(3)=P3
+Alias HalfBr(4)=P4
+Alias HalfBr(5)=A
+Alias HalfBr(6)=B
+Alias HalfBr(7)=C
+Alias HalfBr(8)=D
+Alias CDMPTempC(1)=CDM1PTempC1
+Alias CDMPTempC(2)=CDM1PTempC2
+Alias CDMPTempC(3)=CDM1PTempC3
+Alias CDMPTempC(4)=CDM1PTempC4
+Alias HalfBr_2(1)=East_top
+Alias HalfBr_2(2)=East_Bottom
+Alias HalfBr_2(3)=West_top
+Alias HalfBr_2(4)=West_bottom
+
+Units BattV=Volts
+Units PTemp_C=Deg C
+Units Load_2076=Kip
+Units CDM1BattV=Volts
+Units P1=mV/mV
+Units P2=mV/mV
+Units P3=mV/mV
+Units P4=mV/mV
+Units A=mV/mV
+Units B=mV/mV
+Units C=mV/mV
+Units D=mV/mV
+Units CDM1PTempC1=DegC
+Units CDM1PTempC2=DegC
+Units CDM1PTempC3=DegC
+Units CDM1PTempC4=DegC
+Units East_top=mV/mV
+Units East_Bottom=mV/mV
+Units West_top=mV/mV
+Units West_bottom=mV/mV
+
+'Define Data Tables
+DataTable(DOTEL_ALLDATA,True,-1)
+	DataInterval(0,300,mSec,10)
+	Sample(1,Load_2076,IEEE4)
+	Sample(1,P1,IEEE4)
+	Sample(1,P2,IEEE4)
+	Sample(1,P3,IEEE4)
+	Sample(1,P4,IEEE4)
+	Sample(1,A,IEEE4)
+	Sample(1,B,IEEE4)
+	Sample(1,C,IEEE4)
+	Sample(1,D,IEEE4)
+	Sample(1,East_top,IEEE4)
+	Sample(1,East_Bottom,IEEE4)
+	Sample(1,West_top,IEEE4)
+	Sample(1,West_bottom,IEEE4)
+EndTable
+
+DataTable(DOTEL_ALLDATA_BU,True,-1)
+	DataInterval(0,300,mSec,10)
+	Minimum(1,BattV,IEEE4,False,False)
+	Sample(1,Load_2076,IEEE4)
+	Sample(1,P1,IEEE4)
+	Sample(1,P2,IEEE4)
+	Sample(1,P3,IEEE4)
+	Sample(1,P4,IEEE4)
+	Sample(1,A,IEEE4)
+	Sample(1,B,IEEE4)
+	Sample(1,C,IEEE4)
+	Sample(1,D,IEEE4)
+	Sample(1,East_top,IEEE4)
+	Sample(1,East_Bottom,IEEE4)
+	Sample(1,West_top,IEEE4)
+	Sample(1,West_bottom,IEEE4)
+EndTable
+
+'Calibration history table
+DataTable(CalHist,NewFieldCal,10)
+	SampleFieldCal
+EndTable
+
+'Main Program
+BeginProg
+	'Initialize calibration variables for
+	'Generic Full Bridge measurement 'Load_2076'
+	CIndex=1 : CAvg=1 : CReps=1 : CMult=108.38 : COff=0
+	'Initialize calibration variables for
+	'Generic Half Bridge measurement 'HalfBr()'
+	CIndex_2=1 : CAvg_2=1 : CReps_2=8
+	For LCount_2 = 1 To 8
+		CMult_2(LCount_2)=Mult_2(LCount_2) : COff_2(LCount_2)=Offs_2(LCount_2)
+	Next
+	'Initialize calibration variables for
+	'Generic Half Bridge measurement 'HalfBr_2()' on CDM-A116 with CPI address 1
+	CIndex_3=1 : CAvg_3=1 : CReps_3=4
+	For LCount_3 = 1 To 4
+		CMult_3(LCount_3)=Mult_3(LCount_3) : COff_3(LCount_3)=Offs_3(LCount_3)
+	Next
+	'Load the most recent calibration values from the CalHist table
+	FCLoaded=LoadFieldCal(True)
+	'Main Scan
+	Scan(300,mSec,6,0)
+		'Default CR6 Datalogger Battery Voltage measurement 'BattV'
+		Battery(BattV)
+		'Default CR6 Datalogger Wiring Panel Temperature measurement 'PTemp_C'
+		PanelTemp(PTemp_C,60)
+		'Generic Full Bridge measurements 'Load_2076'
+		BrFull(Load_2076,1,mV5000,U1,U3,1,2500,True,True,500,60,CMult,COff)
+		'Zeroing calibration for Generic Full Bridge measurement 'Load_2076'
+		FieldCal(0,Load_2076,CReps,0,COff,ZMode,0,CIndex,CAvg)
+		'Two Point Multiplier and Offset calibration for
+		'Generic Full Bridge measurement 'Load_2076'
+		FieldCal(2,Load_2076,1,CMult,COff,MOMode,CKnown,CIndex,CAvg)
+		'Generic Half Bridge measurements 'HalfBr()'
+		BrHalf(HalfBr(),8,mV5000,U4,U12,8,2500,True,500,500,CMult_2(),COff_2())
+		'Zeroing calibration for Generic Generic Half Bridge measurement 'HalfBr()'
+		FieldCal(0,HalfBr(),CReps_2,0,COff_2(),Group_A,0,CIndex_2,CAvg_2)
+		'Two Point Multiplier and Offset calibration for
+		'Generic Half Bridge measurement 'HalfBr()'
+		FieldCal(2,HalfBr(),1,CMult_2(),COff_2(),MOMode_2,CKnown_2(),CIndex_2,CAvg_2)
+		'Default Battery Voltage measurement 'CDM1BattV' on CDM-A116 with CPI address 1
+		CDM_Battery(CDM_A116,1,CDM1BattV)
+		'Default Wiring Panel Temperature measurements 'CDMPTempC()' on CDM-A116 with CPI address 1
+		CDM_PanelTemp(CDM_A116,1,CDMPTempC(),4,1,60)
+		'Generic Half Bridge measurements 'HalfBr_2()' on CDM-A116 with CPI address 1
+		CDM_BrHalf(CDM_A116,1,HalfBr_2(),4,mV5000,1,1,4,2500,True,500,60,CMult_3(),COff_3())
+		'Zeroing calibration for Generic Generic Half Bridge measurement 'HalfBr_2()' on CDM-A116 with CPI address 1
+		FieldCal(0,HalfBr_2(),CReps_3,0,COff_3(),Group_C,0,CIndex_3,CAvg_3)
+		'Two Point Multiplier and Offset calibration for
+		'Generic Half Bridge measurement 'HalfBr_2()' on CDM-A116 with CPI address 1
+		FieldCal(2,HalfBr_2(),1,CMult_3(),COff_3(),MOMode_3,CKnown_3(),CIndex_3,CAvg_3)
+		'Call Data Tables and Store Data
+		CallTable DOTEL_ALLDATA
+		CallTable DOTEL_ALLDATA_BU
+		CallTable CalHist
+	NextScan
+EndProg

@@ -1,0 +1,19 @@
+*****************************************************
+==================== TEST RESULTS ===================
+*****************************************************
+Info 1 :
+Info 2 :
+Lab :
+User :
+Test No :284
+Test Start Date :28.03.2025
+Test Start Time :14:33:08
+Test Finish Time :15:04:09
+Numerator :97
+Test Type :SPLIT TENSILE
+Specimen :CUBE
+Dimensions (mm) :0.001x0.001
+Area (mm2) :0.000
+Peak Load (kN) :34957.230
+Peak Stress (MPa) :0.000
+Test Speed (kN/s) :0.000

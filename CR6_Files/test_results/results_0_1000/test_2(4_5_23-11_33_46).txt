@@ -1,0 +1,19 @@
+*****************************************************
+==================== TEST RESULTS ===================
+*****************************************************
+Info 1 :
+Info 2 :
+Lab :
+User :
+Test No :2
+Test Start Date :04.05.2023
+Test Start Time :11:33:46
+Test Finish Time :11:33:58
+Numerator :2
+Test Type :COMPRESSION
+Specimen :ASPHALT
+Dimensions (mm) :10x40
+Area (mm2) :78.540
+Peak Load (kN) :385.389
+Peak Stress (MPa) :4906.929
+Test Speed (kN/s) :0.400

@@ -1,0 +1,19 @@
+*****************************************************
+==================== TEST RESULTS ===================
+*****************************************************
+Info 1 :
+Info 2 :
+Lab :
+User :
+Test No :944
+Test Start Date :26.02.2026
+Test Start Time :16:24:04
+Test Finish Time :16:29:19
+Numerator :28
+Test Type :COMPRESSION
+Specimen :CUBE
+Dimensions (in) :1.5x3.5x10
+Area (in2) :5.250
+Peak Load (lbf) :39099.375
+Peak Stress (psi) :7446.821
+Test Speed (lbf/s) :105.000

@@ -1,0 +1,19 @@
+*****************************************************
+==================== TEST SONUÇLARI ================
+*****************************************************
+Bilgi 1 :
+Bilgi 2 :
+Lab :
+Kullanıcı :
+Test No :8
+Test Başl. Tarihi:
+Test Başl. Saati :
+Test Bitiş Saati :09:39:01
+Numeratör :0
+Test Tipi :BASMA
+Numune :SiLiNDiR
+Boyutlar (mm) :150x300
+Alan (mm2) :17671.459
+Maks. Yük (kN) :0.000
+Maks. Gerilme (MPa) :0.000
+Deney Hızı (kN/s) :10.600

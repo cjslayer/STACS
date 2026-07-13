@@ -1,0 +1,21 @@
+# Top-level (human-edited) dependencies for the DIC app — Python 3.8 / Win7 target.
+# requirements.lock is the fully-pinned, resolved set actually installed/shipped.
+#
+# Constraints that matter for the Win7 + Python 3.8 target:
+#   - numpy < 2          (muDIC is 2021-era; numpy 2.x breaks it)
+#   - numba/llvmlite     pinned to a pair that still provides cp38 Windows wheels
+#   - scipy/scikit-image/matplotlib/Pillow pinned to last versions supporting py3.8
+
+muDIC==0.2.1
+numpy<2
+scipy
+scikit-image
+numba
+matplotlib
+Pillow
+natsort
+dill
+
+# dev / packaging (not shipped in the .exe)
+pytest
+pyinstaller

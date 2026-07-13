@@ -1,0 +1,330 @@
+=========================================================
+ISU Civil Engineering Lab -- CR6 Wiring Diagram
+=========================================================
+Test:       LabTest_006
+Generated:  2026-06-02 14:40:06
+Sensors:    22
+CDM-A116:   1 module(s)
+=========================================================
+
+
+Generic Full Bridge measurement 'L_1'
+---------------------------------------------------------
+Description:  L_1
+Excitation:   2500 mV on U7 (shared across full-bridge sensors)
+
+CR6 Terminal  Wire / Function
+------------  -----------------------------------------
+U1            H  (Signal High, differential +)
+U2            L  (Signal Low,  differential -)
+U7            Excitation (dedicated, shared)
+G             Sensor Ground
+GND/Shield    Cable Shield
+
+
+Generic Full Bridge measurement 'L_2'
+---------------------------------------------------------
+Description:  L_2
+Excitation:   2500 mV on U7 (shared across full-bridge sensors)
+
+CR6 Terminal  Wire / Function
+------------  -----------------------------------------
+U3            H  (Signal High, differential +)
+U4            L  (Signal Low,  differential -)
+U7            Excitation (dedicated, shared)
+G             Sensor Ground
+GND/Shield    Cable Shield
+
+
+Generic Full Bridge measurement 'L_3'
+---------------------------------------------------------
+Description:  L_3
+Excitation:   2500 mV on U7 (shared across full-bridge sensors)
+
+CR6 Terminal  Wire / Function
+------------  -----------------------------------------
+U5            H  (Signal High, differential +)
+U6            L  (Signal Low,  differential -)
+U7            Excitation (dedicated, shared)
+G             Sensor Ground
+GND/Shield    Cable Shield
+
+
+Generic Half Bridge measurement 'SP_1'
+---------------------------------------------------------
+Description:  SP_1
+Excitation:   2500 mV on U12 (shared OK across half-bridge sensors)
+
+CR6 Terminal  Wire / Function
+------------  -----------------------------------------
+U8            Signal
+U12           Excitation
+G             Sensor Ground
+GND/Shield    Cable Shield
+
+
+Generic Half Bridge measurement 'SP_2'
+---------------------------------------------------------
+Description:  SP_2
+Excitation:   2500 mV on U12 (shared OK across half-bridge sensors)
+
+CR6 Terminal  Wire / Function
+------------  -----------------------------------------
+U9            Signal
+U12           Excitation
+G             Sensor Ground
+GND/Shield    Cable Shield
+
+
+Generic Half Bridge measurement 'SP_3'
+---------------------------------------------------------
+Description:  SP_3
+Excitation:   2500 mV on U12 (shared OK across half-bridge sensors)
+
+CR6 Terminal  Wire / Function
+------------  -----------------------------------------
+U10           Signal
+U12           Excitation
+G             Sensor Ground
+GND/Shield    Cable Shield
+
+
+Generic Half Bridge measurement 'SP_4'
+---------------------------------------------------------
+Description:  SP_4
+Excitation:   2500 mV on U12 (shared OK across half-bridge sensors)
+
+CR6 Terminal  Wire / Function
+------------  -----------------------------------------
+U11           Signal
+U12           Excitation
+G             Sensor Ground
+GND/Shield    Cable Shield
+
+
+Generic Half Bridge measurement 'SP_5' (CDM-A116 #1)
+---------------------------------------------------------
+Description:  SP_5
+Excitation:   2500 mV
+
+CDM-A116 #1 Terminal  Wire / Function
+--------------------  -----------------------------------------
+CH1H                  Signal High
+CH1L                  Signal Low
+EX1                   Excitation
+G                     Sensor Ground
+GND/Shield            Cable Shield
+
+
+Generic Half Bridge measurement 'SP_6' (CDM-A116 #1)
+---------------------------------------------------------
+Description:  SP_6
+Excitation:   2500 mV
+
+CDM-A116 #1 Terminal  Wire / Function
+--------------------  -----------------------------------------
+CH2H                  Signal High
+CH2L                  Signal Low
+EX1                   Excitation
+G                     Sensor Ground
+GND/Shield            Cable Shield
+
+
+Generic Half Bridge measurement 'SP_7' (CDM-A116 #1)
+---------------------------------------------------------
+Description:  SP_7
+Excitation:   2500 mV
+
+CDM-A116 #1 Terminal  Wire / Function
+--------------------  -----------------------------------------
+CH3H                  Signal High
+CH3L                  Signal Low
+EX1                   Excitation
+G                     Sensor Ground
+GND/Shield            Cable Shield
+
+
+Generic Half Bridge measurement 'D_1' (CDM-A116 #1)
+---------------------------------------------------------
+Description:  D_1
+Excitation:   2500 mV
+
+CDM-A116 #1 Terminal  Wire / Function
+--------------------  -----------------------------------------
+CH4H                  Signal High
+CH4L                  Signal Low
+EX1                   Excitation
+G                     Sensor Ground
+GND/Shield            Cable Shield
+
+
+Generic Half Bridge measurement 'D_2' (CDM-A116 #1)
+---------------------------------------------------------
+Description:  D_2
+Excitation:   2500 mV
+
+CDM-A116 #1 Terminal  Wire / Function
+--------------------  -----------------------------------------
+CH5H                  Signal High
+CH5L                  Signal Low
+EX1                   Excitation
+G                     Sensor Ground
+GND/Shield            Cable Shield
+
+
+Generic Half Bridge measurement 'D_3' (CDM-A116 #1)
+---------------------------------------------------------
+Description:  D_3
+Excitation:   2500 mV
+
+CDM-A116 #1 Terminal  Wire / Function
+--------------------  -----------------------------------------
+CH6H                  Signal High
+CH6L                  Signal Low
+EX1                   Excitation
+G                     Sensor Ground
+GND/Shield            Cable Shield
+
+
+Generic Half Bridge measurement 'D_4' (CDM-A116 #1)
+---------------------------------------------------------
+Description:  D_4
+Excitation:   2500 mV
+
+CDM-A116 #1 Terminal  Wire / Function
+--------------------  -----------------------------------------
+CH7H                  Signal High
+CH7L                  Signal Low
+EX1                   Excitation
+G                     Sensor Ground
+GND/Shield            Cable Shield
+
+
+Generic Half Bridge measurement 'D_5' (CDM-A116 #1)
+---------------------------------------------------------
+Description:  D_5
+Excitation:   2500 mV
+
+CDM-A116 #1 Terminal  Wire / Function
+--------------------  -----------------------------------------
+CH8H                  Signal High
+CH8L                  Signal Low
+EX1                   Excitation
+G                     Sensor Ground
+GND/Shield            Cable Shield
+
+
+Generic Half Bridge measurement 'D_6' (CDM-A116 #1)
+---------------------------------------------------------
+Description:  D_6
+Excitation:   2500 mV
+
+CDM-A116 #1 Terminal  Wire / Function
+--------------------  -----------------------------------------
+CH9H                  Signal High
+CH9L                  Signal Low
+EX1                   Excitation
+G                     Sensor Ground
+GND/Shield            Cable Shield
+
+
+Generic Half Bridge measurement 'D_7' (CDM-A116 #1)
+---------------------------------------------------------
+Description:  D_7
+Excitation:   2500 mV
+
+CDM-A116 #1 Terminal  Wire / Function
+--------------------  -----------------------------------------
+CH10H                 Signal High
+CH10L                 Signal Low
+EX1                   Excitation
+G                     Sensor Ground
+GND/Shield            Cable Shield
+
+
+Generic Half Bridge measurement 'D_8' (CDM-A116 #1)
+---------------------------------------------------------
+Description:  D_8
+Excitation:   2500 mV
+
+CDM-A116 #1 Terminal  Wire / Function
+--------------------  -----------------------------------------
+CH11H                 Signal High
+CH11L                 Signal Low
+EX1                   Excitation
+G                     Sensor Ground
+GND/Shield            Cable Shield
+
+
+Quarter Bridge (CDM-A116) measurement 'S_1' (CDM-A116 #1)
+---------------------------------------------------------
+Description:  S_1
+CDM-A116 #1:  Channel 12,  Gauge Factor 2.0
+
+CDM-A116 #1 Terminal  Wire / Function
+--------------------  -----------------------------------------
+CH12H                 Signal High
+CH12L                 Signal Low
+EX1                   Excitation (shared by gauge group)
+G                     Sensor Ground
+GND/Shield            Cable Shield
+
+
+Quarter Bridge (CDM-A116) measurement 'S_2' (CDM-A116 #1)
+---------------------------------------------------------
+Description:  S_2
+CDM-A116 #1:  Channel 13,  Gauge Factor 2.0
+
+CDM-A116 #1 Terminal  Wire / Function
+--------------------  -----------------------------------------
+CH13H                 Signal High
+CH13L                 Signal Low
+EX1                   Excitation (shared by gauge group)
+G                     Sensor Ground
+GND/Shield            Cable Shield
+
+
+Quarter Bridge (CDM-A116) measurement 'S_3' (CDM-A116 #1)
+---------------------------------------------------------
+Description:  S_3
+CDM-A116 #1:  Channel 14,  Gauge Factor 2.0
+
+CDM-A116 #1 Terminal  Wire / Function
+--------------------  -----------------------------------------
+CH14H                 Signal High
+CH14L                 Signal Low
+EX1                   Excitation (shared by gauge group)
+G                     Sensor Ground
+GND/Shield            Cable Shield
+
+
+Quarter Bridge (CDM-A116) measurement 'S_4' (CDM-A116 #1)
+---------------------------------------------------------
+Description:  S_4
+CDM-A116 #1:  Channel 15,  Gauge Factor 2.0
+
+CDM-A116 #1 Terminal  Wire / Function
+--------------------  -----------------------------------------
+CH15H                 Signal High
+CH15L                 Signal Low
+EX1                   Excitation (shared by gauge group)
+G                     Sensor Ground
+GND/Shield            Cable Shield
+
+
+=========================================================
+CDM-A116 MODULE CONNECTIONS
+---------------------------------------------------------
+CDM-A116 #1 CPI  ---> CR6 CPI Port
+CDM-A116 #1 12V  ---> External 12 V Power Supply
+
+
+=========================================================
+Notes for the operator:
+  - Multiple sensors may share the same excitation terminal
+    as long as they all use the same excitation voltage.
+  - All sensor grounds tie to any G terminal on the CR6 or CDM.
+  - Shields connect at the logger/module end only; leave the sensor
+    end floating to avoid ground loops.
+  - This diagram is auto-generated. Do not edit by hand.
+=========================================================

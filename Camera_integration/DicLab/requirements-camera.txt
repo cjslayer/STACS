@@ -1,0 +1,14 @@
+# Optional camera capture dependencies -- not needed for the headless
+# core (correlation.py/results.py/project.py) or for running on stored
+# image folders. Install only what you need:
+#
+#   pip install -r requirements-camera.txt          # both backends
+#   pip install pypylon                              # Basler acA2440-75um only
+#   pip install opencv-python                         # webcam/dev backend only
+#
+# pypylon also requires the Basler pylon Software Suite runtime to be
+# installed on the machine (carries the USB3 Vision driver):
+#   https://www.baslerweb.com/en/software/pylon/
+
+pypylon
+opencv-python

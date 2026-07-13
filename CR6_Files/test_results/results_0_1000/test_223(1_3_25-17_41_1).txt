@@ -1,0 +1,19 @@
+*****************************************************
+==================== TEST RESULTS ===================
+*****************************************************
+Info 1 :
+Info 2 :
+Lab :
+User :
+Test No :223
+Test Start Date :01.03.2025
+Test Start Time :17:41:01
+Test Finish Time :17:43:26
+Numerator :36
+Test Type :SPLIT TENSILE
+Specimen :CYLINDER
+Dimensions (in) :12x6
+Area (in2) :113.097
+Peak Load (lbf) :42931.680
+Peak Stress (psi) :379.442
+Test Speed (lbf/s) :282.740

@@ -1,0 +1,19 @@
+*****************************************************
+==================== TEST SONUÇLARI ================
+*****************************************************
+Bilgi 1 :
+Bilgi 2 :
+Lab :
+Kullanıcı :
+Test No :22
+Test Başl. Tarihi:15.05.2023
+Test Başl. Saati :10:58:23
+Test Bitiş Saati :10:58:42
+Numeratör :14
+Test Tipi :BASMA
+Numune :SiLiNDiR
+Boyutlar (in) :5.906x11.811
+Alan (in2) :27.395
+Maks. Yük (lbf) :0.000
+Maks. Gerilme (psi) :0.000
+Deney Hızı (lbf/s) :2382.970
