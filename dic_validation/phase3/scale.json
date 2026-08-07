@@ -1,0 +1,20 @@
+{
+  "mm_per_px": 0.1962592759815318,
+  "span_px": 1326.8162673977452,
+  "left_px": 337.03677151927826,
+  "right_px": 1663.8530389170235,
+  "left_transition_px": 6.934122330018795,
+  "right_transition_px": 5.817822460066964,
+  "block_rows": [
+    72.67350953449213,
+    1143.9307578149396
+  ],
+  "paper_left_px": 159.77424332762396,
+  "paper_right_px": 1739.6710831506239,
+  "ambiguous": false,
+  "block_width_mm": 260.4,
+  "resolution": [
+    1920,
+    1200
+  ]
+}

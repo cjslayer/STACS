@@ -1,0 +1,51 @@
+{
+  "tried": [
+    {
+      "index": 0,
+      "backend": "CAP_MSMF",
+      "result": "OPENED"
+    }
+  ],
+  "index": 0,
+  "backend": "CAP_MSMF",
+  "width": 1920,
+  "height": 1200,
+  "advertised_fps": 30.0,
+  "lock_results": [
+    {
+      "name": "CAP_PROP_AUTOFOCUS",
+      "requested": 0.0,
+      "accepted": false,
+      "readback": -1.0,
+      "status": "unsupported"
+    },
+    {
+      "name": "CAP_PROP_AUTO_EXPOSURE",
+      "requested": 0.0,
+      "accepted": true,
+      "readback": 0.0,
+      "status": "locked"
+    },
+    {
+      "name": "CAP_PROP_AUTO_WB",
+      "requested": 0.0,
+      "accepted": false,
+      "readback": -1.0,
+      "status": "unsupported"
+    }
+  ],
+  "measured_fps": 29.935309198297524,
+  "startup_diagnostics": {
+    "total_grabs": 150,
+    "failed_grabs": 0,
+    "drop_rate": 0.0,
+    "intensity_drift": 0.00017829941878333316,
+    "drift_exceeds_limit": false,
+    "mean_intensity_first": 198.01874001736113,
+    "mean_intensity_last": 198.04883940972223
+  },
+  "preview_stills": [
+    "C:\\Users\\Lab\\Projectt\\STACS\\dic_validation\\captures\\locked_20260804_161008_181.png",
+    "C:\\Users\\Lab\\Projectt\\STACS\\dic_validation\\captures\\locked_20260804_161011_104.png"
+  ]
+}

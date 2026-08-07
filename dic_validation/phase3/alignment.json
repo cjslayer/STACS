@@ -1,0 +1,17 @@
+{
+  "date": "2026-08-05",
+  "method": "alignment_check.py span-change loop, operator-adjusted rail angle",
+  "limit_pct": 0.3,
+  "note": "camera shifted laterally after first acceptance to keep the tick bar in frame; alignment re-verified afterwards",
+  "final_pass": {
+    "baseline_span_px": 1328.06,
+    "end_of_travel_span_px": 1326.81,
+    "span_change_pct": -0.094,
+    "block_left_baseline_px": 190.07,
+    "block_left_end_px": 336.89
+  },
+  "previous_pass_span_change_pct": 0.234,
+  "pre_camera_shift_passes_pct": [0.192, -0.210],
+  "trial1_span_change_pct_for_reference": -1.49,
+  "accepted": true
+}
