@@ -139,17 +139,21 @@ ALL_CHANNELS_LABEL = '(all channels)'
 # Utility
 # ──────────────────────────────────────────────────────────────────────────────
 
-def normalize_df(df: pd.DataFrame) -> pd.DataFrame:
+def normalize_df(df: pd.DataFrame, time_origin=None) -> pd.DataFrame:
     """
     Normalize a raw DataFrame into the app's standard column schema.
 
     1. Alias known column names (case-insensitive, strip-safe) — best-effort.
     2. Convert any non-numeric time column (datetime strings or objects) to
-       elapsed seconds from the first valid row.
+       elapsed seconds from the first valid row — or from ``time_origin``
+       (an absolute timestamp) when given, so successive live files share
+       one time axis instead of each restarting at 0.
     3. Coerce every column to numeric (non-parseable values become NaN).
     4. Drop columns that are entirely NaN after coercion.
     5. Drop rows where time_s is NaN (if time_s is present).
-    Returns whatever numeric columns survive — never raises.
+    Returns whatever numeric columns survive — never raises.  When step 2
+    converted timestamps, the origin used is stored in
+    ``df.attrs['time_origin']`` so callers can align later files to it.
     """
     if df is None or df.empty:
         return pd.DataFrame()
@@ -168,11 +172,17 @@ def normalize_df(df: pd.DataFrame) -> pd.DataFrame:
     # Step 2 — convert time column to elapsed seconds
     if 'time_s' in df.columns:
         if not pd.api.types.is_numeric_dtype(df['time_s']):
-            # Datetime strings (e.g. "2026-08-27 23:55:30")
-            parsed = pd.to_datetime(df['time_s'], errors='coerce')
+            # Datetime strings (e.g. "2026-08-27 23:55:30"). format='mixed'
+            # parses per-element: TOA5 trims zero fractional seconds, so
+            # sub-second tables mix "…:20.25" with "…:21" and inferring one
+            # format from the first row silently drops the other kind.
+            parsed = pd.to_datetime(df['time_s'], format='mixed',
+                                    errors='coerce')
             if parsed.notna().any():
-                origin = parsed.dropna().iloc[0]
+                origin = (time_origin if time_origin is not None
+                          else parsed.dropna().iloc[0])
                 df['time_s'] = (parsed - origin).dt.total_seconds()
+                df.attrs['time_origin'] = origin
         else:
             # Excel serial-date numbers produced by the pyxlsb engine:
             # values like 46261.99... (days since 1899-12-30) are >> 40000.
@@ -252,7 +262,7 @@ def _read_csv_robust(path) -> pd.DataFrame:
         raise ValueError(f"Could not parse as CSV: {e}")
 
 
-def read_file(path) -> pd.DataFrame:
+def read_file(path, time_origin=None) -> pd.DataFrame:
     """
     Read a data file into a normalized DataFrame.
 
@@ -283,7 +293,7 @@ def read_file(path) -> pd.DataFrame:
     else:
         raw = _read_csv_robust(path)
 
-    return normalize_df(raw)
+    return normalize_df(raw, time_origin=time_origin)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -340,7 +350,11 @@ def _read_toa5(text: str) -> pd.DataFrame:
         return pd.DataFrame(columns=header)
 
     if 'TIMESTAMP' in df.columns:
-        df['TIMESTAMP'] = pd.to_datetime(df['TIMESTAMP'], errors='coerce')
+        # format='mixed' (per-element): TOA5 trims zero fractional seconds,
+        # so sub-second tables mix "…:20.25" with "…:21"; inferring one
+        # format from the first row would NaT-out the other kind.
+        df['TIMESTAMP'] = pd.to_datetime(df['TIMESTAMP'], format='mixed',
+                                         errors='coerce')
         df = df.dropna(subset=['TIMESTAMP']).reset_index(drop=True)
     return df
 
@@ -424,6 +438,7 @@ class DataManager:
     def __init__(self):
         self.df_full        = None
         self.df_current     = None
+        self.time_origin    = None   # absolute t=0 shared by all loaded files
         self.source_files   = []
         self.backup_dir     = Path.home() / 'Desktop' / 'LabData_Backup'
         self.compare_frames = []   # populated by load_separate()
@@ -438,9 +453,13 @@ class DataManager:
         Raises ValueError if nothing could be loaded at all.
         """
         frames, errors = [], []
+        origin = None
         for p in paths:
             try:
-                frames.append(read_file(p))
+                df = read_file(p, time_origin=origin)
+                if origin is None:
+                    origin = df.attrs.get('time_origin')
+                frames.append(df)
             except Exception as e:
                 errors.append(f"{Path(p).name}: {e}")
 
@@ -453,6 +472,7 @@ class DataManager:
 
         self.df_full      = merged.copy()
         self.df_current   = merged.copy()
+        self.time_origin  = origin
         self.source_files = list(paths)
         return errors
 
@@ -465,9 +485,13 @@ class DataManager:
             return self.load(paths)
 
         frames, errors = [self.df_full], []
+        origin = self.time_origin
         for p in paths:
             try:
-                frames.append(read_file(p))
+                df = read_file(p, time_origin=origin)
+                if origin is None:
+                    origin = df.attrs.get('time_origin')
+                frames.append(df)
             except Exception as e:
                 errors.append(f"{Path(p).name}: {e}")
 
@@ -477,6 +501,7 @@ class DataManager:
 
         self.df_full      = merged.copy()
         self.df_current   = merged.copy()
+        self.time_origin  = origin
         self.source_files.extend(paths)
         return errors
 
@@ -606,7 +631,7 @@ class DataManager:
 
 class LiveWatcher:
     """
-    Background thread that polls a folder every 2 seconds for new CSV files.
+    Background thread that polls a folder every 1 second for new CSV files.
     Calls on_new_files(paths) when any appear. Thread-safe: only the callback
     touches shared state, and callers must route it through root.after().
     """
@@ -643,7 +668,7 @@ class LiveWatcher:
                     self._cb(new)
             except Exception:
                 pass
-            time.sleep(2.0)
+            time.sleep(1.0)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
