@@ -24,6 +24,7 @@ import time
 import glob
 import shutil
 import json
+import traceback
 from datetime import datetime
 from pathlib import Path
 
@@ -314,6 +315,33 @@ VW_DEFAULTS = {
 # Default gauge frequency column names in the CR6 TOA5 table.
 VW_FREQ_COLS = ['Freq_1', 'Freq_2', 'Freq_3']
 
+# Column families vw_auto_columns() tries, in priority order:
+# (name template for gauge n, input mode that family implies).
+_VW_COLUMN_FAMILIES = [
+    ('VW_G{n}_digits', 'Digits'),   # vw_static.CR6 expanded table
+    ('VW_G{n}_freq',   'Hz'),       # vw_static.CR6 raw frequencies
+    ('Freq_{n}',       'Hz'),       # legacy Short Cut tables
+]
+
+
+def vw_auto_columns(cols):
+    """
+    Pick default gauge columns for a VW cell from a table's column list.
+
+    Tries each known column family in priority order and returns
+    (['c1', 'c2', 'c3'], input_mode) for the first family whose three
+    columns are ALL present. TIMESTAMP/RECORD are never candidates, and
+    when no family matches completely the slots are left empty
+    (['', '', ''], None) — positional guessing is forbidden: the old
+    fallback once auto-selected RECORD plus two freq columns and averaged
+    the record counter into a live load reading.
+    """
+    for template, mode in _VW_COLUMN_FAMILIES:
+        names = [template.format(n=i) for i in (1, 2, 3)]
+        if all(name in cols for name in names):
+            return names, mode
+    return ['', '', ''], None
+
 
 def _read_toa5(text: str) -> pd.DataFrame:
     """
@@ -393,6 +421,12 @@ def vw_compute(df: pd.DataFrame, g_cols: list, input_is_digits: bool,
     consts          — dict of calibration constants (missing keys fall back to
                       VW_DEFAULTS).
 
+    A row where any selected column is NaN yields NaN for both R1 and Load,
+    never a partial-gauge mean: the calibration constants describe the
+    3-gauge average of this shared-common cell, so quietly averaging the
+    surviving gauges would shift the baseline and skew the load while
+    looking healthy. A dead gauge must surface as a gap, not a bias.
+
     Returns (R1, Load) as pandas Series aligned to df.index. This is the single
     source of truth feeding the graph, the readout, AND the CSV log.
     """
@@ -407,7 +441,11 @@ def vw_compute(df: pd.DataFrame, g_cols: list, input_is_digits: bool,
             s = (s ** 2) / 1000.0
         digit_series.append(s)
 
-    R1 = pd.concat(digit_series, axis=1).mean(axis=1)
+    mat = pd.concat(digit_series, axis=1)
+    R1 = mat.mean(axis=1)
+    # mean(axis=1) skips NaN, i.e. silently averages fewer gauges — see
+    # the docstring for why that must become NaN instead.
+    R1[mat.isna().any(axis=1)] = float('nan')
 
     if equation == 'Polynomial':
         A = consts.get('A', VW_DEFAULTS['A'])
@@ -792,6 +830,7 @@ class VWLiveMonitor:
             'const_vars': {k: tk.StringVar(value=str(v))
                            for k, v in VW_DEFAULTS.items()},
             'readout':    tk.StringVar(value='—'),
+            'readout_label': None,   # set in _build_cell; recolored on error
             'status':     tk.StringVar(value='Disabled'),
             # Matplotlib (created in _build_cell)
             'fig':        None,
@@ -895,8 +934,11 @@ class VWLiveMonitor:
         # Large load readout
         readrow = tk.Frame(outer, bg=C['panel'])
         readrow.pack(fill=tk.X, padx=8, pady=(4, 2))
-        tk.Label(readrow, textvariable=cell['readout'], bg=C['panel'],
-                 fg=C['accent'], font=('Consolas', 26, 'bold')).pack(side=tk.LEFT)
+        readout_lbl = tk.Label(readrow, textvariable=cell['readout'],
+                               bg=C['panel'], fg=C['accent'],
+                               font=('Consolas', 26, 'bold'))
+        readout_lbl.pack(side=tk.LEFT)
+        cell['readout_label'] = readout_lbl
         tk.Label(readrow, text="lbf", bg=C['panel'], fg=C['muted'],
                  font=('Segoe UI', 11)).pack(side=tk.LEFT, padx=(4, 0), pady=(10, 0))
         tk.Label(readrow, textvariable=cell['status'], bg=C['panel'],
@@ -941,12 +983,12 @@ class VWLiveMonitor:
             return
         cols = [c for c in df.columns if c != 'TIMESTAMP']
         cell['columns'] = cols
+        defaults, mode = vw_auto_columns(cols)
         for i, cb in enumerate(cell['g_combos']):
             cb['values'] = cols
-            # Default to Freq_1/2/3 when present, else first available columns.
-            default = VW_FREQ_COLS[i] if VW_FREQ_COLS[i] in cols else (
-                cols[i] if i < len(cols) else '')
-            cell['g_vars'][i].set(default)
+            cell['g_vars'][i].set(defaults[i])
+        if mode is not None:
+            cell['input_mode'].set(mode)
 
     def _on_enable(self, name: str):
         cell = self.cells[name]
@@ -995,7 +1037,17 @@ class VWLiveMonitor:
             return
 
         g_cols = [v.get() for v in cell['g_vars']]
-        if any((not c) or (c not in df.columns) for c in g_cols):
+        if any((not c) or c in ('RECORD', 'TIMESTAMP') for c in g_cols):
+            # An empty slot or a non-measurement column must never reach
+            # vw_compute: averaging RECORD into R1 once produced a
+            # plausible-looking but garbage live load during a real test.
+            cell['readout'].set('CHECK COLUMNS')
+            if cell['readout_label'] is not None:
+                cell['readout_label'].config(fg=C['btn_danger'])
+            cell['status'].set('Gauge column unset or non-measurement — '
+                               'pick 3 gauge columns')
+            return
+        if any(c not in df.columns for c in g_cols):
             cell['status'].set('Pick 3 valid gauge columns')
             return
 
@@ -1039,6 +1091,8 @@ class VWLiveMonitor:
         if cell['series']:
             newest_t = max(cell['series'])
             cell['readout'].set(f"{cell['series'][newest_t]:,.1f}")
+            if cell['readout_label'] is not None:
+                cell['readout_label'].config(fg=C['accent'])
             cell['status'].set(
                 f"{len(cell['series'])} pts · last {newest_t.strftime('%H:%M:%S')}")
         else:
@@ -1141,7 +1195,10 @@ class VWLiveMonitor:
             ])
             self._log_fh.flush()
         except Exception:
-            pass
+            # The CSV log is the test record — a dying log must be loud.
+            # Warning stays in the title until the window is reopened.
+            traceback.print_exc(file=sys.stderr)
+            self.win.title("Vibrating-Wire Live Monitor — LOG WRITE FAILED")
 
     # ── Lifecycle ──────────────────────────────────────────────────────────────
 
