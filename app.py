@@ -460,6 +460,102 @@ def vw_compute(df: pd.DataFrame, g_cols: list, input_is_digits: bool,
     return R1, Load
 
 
+# ── Pre-test wire health check (pure logic; UI in VWCalibrationWindow) ────────
+#
+# Physics: Load = |G|·Δ(mean digits), and when every wire is healthy each
+# INDIVIDUAL gauge drops ≈ W/|G| digits under load W (factory cal sheet:
+# 20,000 lbs → per-gauge drops 212–225 digits vs W/|G| = 208). A wire whose
+# drop deviates far from that is not seeing the load (observed live: a gauge
+# with healthy amplitude/SNR responded at ~11% of its siblings, so the
+# 3-gauge mean read 45.5k lbf against 67k applied).
+
+# A wire is BAD when |delta - expected| exceeds
+# max(WIRE_TOL_FLOOR_DIGITS, WIRE_TOL_FRAC * expected).
+WIRE_TOL_FLOOR_DIGITS = 10.0   # absolute tolerance floor, digits
+WIRE_TOL_FRAC = 0.25           # fractional tolerance vs the expected drop
+
+# Below this expected per-wire drop the calibration load cannot separate a
+# faulty wire from measurement noise; the UI must warn and require explicit
+# confirmation before evaluating.
+WIRE_MIN_EXPECTED_DIGITS = 20.0
+
+
+def vw_samples_to_digits(samples, input_is_digits):
+    """Convert captured column samples to digits (Hz -> x^2/1000)."""
+    if input_is_digits:
+        return [float(s) for s in samples]
+    return [float(s) ** 2 / 1000.0 for s in samples]
+
+
+def vw_expected_drop(cal_load, gauge_factor):
+    """Expected per-wire digit drop under cal_load: W / |G|."""
+    return abs(float(cal_load)) / abs(float(gauge_factor))
+
+
+def vw_evaluate_wires(baselines, loadeds, cal_load, gauge_factor,
+                      allow_small=False):
+    """
+    Judge each wire's response to a known calibration load.
+
+    baselines/loadeds — per-wire lists of digit samples captured with the
+    cell unloaded / under cal_load (same wire order in both).
+    Per wire: delta = mean(baseline) - mean(loaded); the wire is BAD when
+    |delta - expected| > max(WIRE_TOL_FLOOR_DIGITS,
+    WIRE_TOL_FRAC * expected) with expected = cal_load/|G|. Two-sided by
+    construction: it flags under-responders, over-responders, and wires
+    that RISE under load. deviation_pct is signed:
+    (delta - expected) / expected * 100.
+
+    Raises ValueError when expected < WIRE_MIN_EXPECTED_DIGITS unless
+    allow_small=True (the caller must get explicit operator confirmation).
+
+    Returns a list of dicts (one per wire, in input order):
+    {'delta', 'expected', 'deviation_pct', 'bad'}.
+    """
+    expected = vw_expected_drop(cal_load, gauge_factor)
+    if expected < WIRE_MIN_EXPECTED_DIGITS and not allow_small:
+        raise ValueError(
+            f"expected per-wire drop is only {expected:.1f} digits "
+            f"(< {WIRE_MIN_EXPECTED_DIGITS:g}); the calibration load is too "
+            "small to discriminate a faulty wire")
+    tol = max(WIRE_TOL_FLOOR_DIGITS, WIRE_TOL_FRAC * expected)
+    results = []
+    for base, loaded in zip(baselines, loadeds):
+        delta = (sum(base) / len(base)) - (sum(loaded) / len(loaded))
+        results.append({
+            'delta': delta,
+            'expected': expected,
+            'deviation_pct': (delta - expected) / expected * 100.0,
+            'bad': abs(delta - expected) > tol,
+        })
+    return results
+
+
+def vw_rezero_r0(kept_baselines):
+    """
+    New R0 after dropping wires: mean of the REMAINING wires' captured
+    baseline means. R0 describes the baseline of the gauge mean actually
+    being averaged: the old R0 was the 3-gauge mean's baseline, and a
+    subset mean sits at a different baseline, so retaining the old R0
+    would bias every subsequent load reading by G times the difference.
+    """
+    wire_means = [sum(b) / len(b) for b in kept_baselines]
+    return sum(wire_means) / len(wire_means)
+
+
+def vw_next_recording_path(directory, cell_name):
+    """
+    Lowest-unused untitled_cell{X}_{NNN}.csv path in directory (scanned at
+    file-open time; numbering independent per cell)."""
+    directory = Path(directory)
+    n = 1
+    while True:
+        path = directory / f"untitled_cell{cell_name}_{n:03d}.csv"
+        if not path.exists():
+            return path
+        n += 1
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Data Manager
 # ──────────────────────────────────────────────────────────────────────────────
@@ -781,8 +877,14 @@ class VWLiveMonitor:
 
     Every ~2 s (≈0.5 Hz, by design) _tick re-reads each enabled cell's file,
     appends only genuinely new rows, redraws each cell's graph as a single
-    time-ordered de-duplicated line, updates the readouts, and logs one row per
-    tick to a CSV in a VW_Logs folder next to the watched .dat file.
+    time-ordered de-duplicated line, and updates the readouts.
+
+    Recording is gated by the RUN CELL(S) state machine
+    (UNVERIFIED -> ARMED -> RUNNING): in UNVERIFIED the button opens the
+    Calibration test window (pre-test wire health check); any resolution of
+    that window arms; the next press starts per-cell recording sessions
+    (untitled_cell{A|B}_{NNN}.csv in VW_Logs next to each watched .dat).
+    The live plot and readout run regardless of recording state.
     """
 
     POLL_MS = 2000  # ~0.5 Hz update rate (one point per ~2 s) — by design.
@@ -794,15 +896,10 @@ class VWLiveMonitor:
         self.win.configure(bg=C['bg'])
         self.win.minsize(980, 620)
 
-        # Per-tick CSV log state (lazily opened once a cell has a folder).
-        self._log_fh = None
-        self._log_writer = None
-        self._log_dir = None
-        self._log_start = None   # set when the log is created (Start); elapsed origin
-        self._session_tag = datetime.now().strftime('%Y%m%d_%H%M%S')
-        # Carry-forward of each cell's latest computed (R1, Load) for the CSV.
-        self._last_log = {'A': {'r1': None, 'load': None},
-                          'B': {'r1': None, 'load': None}}
+        # RUN CELL(S) gate — recording only ever starts through this.
+        self._run_state = 'UNVERIFIED'   # -> 'ARMED' -> 'RUNNING'
+        self._run_status = tk.StringVar(value='UNVERIFIED')
+        self._cal_win = None             # open VWCalibrationWindow, if any
 
         self.cells = {'A': self._new_cell('A'), 'B': self._new_cell('B')}
 
@@ -832,6 +929,16 @@ class VWLiveMonitor:
             'readout':    tk.StringVar(value='—'),
             'readout_label': None,   # set in _build_cell; recolored on error
             'status':     tk.StringVar(value='Disabled'),
+            # Wires dropped by the calibration wire check (column names).
+            # A dropped wire leaves its gauge slot empty on purpose.
+            'dropped':    [],
+            # Per-cell recording session (opened via the RUN CELL(S) gate)
+            'rec_fh':     None,
+            'rec_writer': None,
+            'rec_path':   None,
+            'rec_origin': None,   # first recorded row's timestamp (Elapsed_s=0)
+            'rec_btn':    None,   # red STOP / green GO (packed when RUNNING)
+            'rec_status': tk.StringVar(value=''),
             # Matplotlib (created in _build_cell)
             'fig':        None,
             'ax':         None,
@@ -859,6 +966,10 @@ class VWLiveMonitor:
         tk.Label(header, text="Vibrating-Wire Live Monitor — two independent load cells",
                  bg=C['accent'], fg='white',
                  font=('Segoe UI', 11, 'bold')).pack(side=tk.LEFT, padx=12)
+        self._btn(header, "RUN CELL(S)", self._on_run_cells, 'danger'
+                  ).pack(side=tk.RIGHT, padx=12, pady=4)
+        tk.Label(header, textvariable=self._run_status, bg=C['accent'],
+                 fg='white', font=('Segoe UI', 8)).pack(side=tk.RIGHT)
 
         body = tk.Frame(self.win, bg=C['bg'])
         body.pack(fill=tk.BOTH, expand=True)
@@ -885,6 +996,10 @@ class VWLiveMonitor:
                        bg=C['panel'], fg=C['text'], activebackground=C['panel'],
                        font=('Segoe UI', 9), command=lambda: self._on_enable(name)
                        ).pack(side=tk.RIGHT)
+        # STOP/GO recording toggle — packed only once recording starts.
+        cell['rec_btn'] = self._btn(title, "STOP",
+                                    lambda: self._on_rec_toggle(name),
+                                    'danger', width=6)
 
         # File picker
         filerow = tk.Frame(outer, bg=C['panel'])
@@ -943,6 +1058,11 @@ class VWLiveMonitor:
                  font=('Segoe UI', 11)).pack(side=tk.LEFT, padx=(4, 0), pady=(10, 0))
         tk.Label(readrow, textvariable=cell['status'], bg=C['panel'],
                  fg=C['muted'], font=('Segoe UI', 8)).pack(side=tk.RIGHT)
+
+        # Recording status (file path of the active/last session)
+        tk.Label(outer, textvariable=cell['rec_status'], bg=C['panel'],
+                 fg=C['muted'], font=('Segoe UI', 8), anchor='w',
+                 wraplength=440, justify='left').pack(fill=tk.X, padx=8)
 
         # Per-cell graph (own figure + own axis)
         fig = Figure(figsize=(4.2, 3.0), dpi=100)
@@ -1010,6 +1130,129 @@ class VWLiveMonitor:
                 out[k] = default
         return out
 
+    def _active_g_cols(self, cell: dict) -> list:
+        """Currently selected gauge columns (empty slots skipped)."""
+        return [v.get() for v in cell['g_vars'] if v.get()]
+
+    # ── RUN CELL(S) gate ───────────────────────────────────────────────────────
+
+    def _on_run_cells(self):
+        if self._run_state == 'RUNNING':
+            return
+        if self._run_state == 'ARMED':
+            self._start_recording()
+            return
+        # UNVERIFIED: notification sound, then the modal calibration gate.
+        try:
+            import winsound
+            winsound.MessageBeep()
+        except Exception:
+            try:
+                self.root.bell()
+            except Exception:
+                pass
+        if not any(self.cells[n]['path'] for n in ('A', 'B')):
+            messagebox.showinfo(
+                "No cells", "Select a .dat file for at least one cell first.",
+                parent=self.win)
+            return
+        if self._cal_win is not None and self._cal_win.win.winfo_exists():
+            self._cal_win.win.lift()
+            return
+        self._cal_win = VWCalibrationWindow(self)
+
+    def _arm(self):
+        """Any calibration resolution (pass, ignore, drop, risk-ignore)."""
+        if self._run_state == 'UNVERIFIED':
+            self._run_state = 'ARMED'
+            self._run_status.set('ARMED')
+
+    # ── Per-cell recording sessions ────────────────────────────────────────────
+
+    def _start_recording(self):
+        started = False
+        for name in ('A', 'B'):
+            cell = self.cells[name]
+            if not cell['path']:
+                continue
+            try:
+                self._open_recording(cell)
+                started = True
+            except Exception as e:
+                cell['rec_status'].set(f"Could not open recording: {e}")
+        if started:
+            self._run_state = 'RUNNING'
+            self._run_status.set('RUNNING')
+
+    def _open_recording(self, cell: dict):
+        """Open the next-numbered per-cell file and write metadata + header."""
+        log_dir = Path(cell['path']).parent / 'VW_Logs'
+        log_dir.mkdir(parents=True, exist_ok=True)
+        path = vw_next_recording_path(log_dir, cell['name'])
+        consts = self._consts(cell)
+        equation = cell['equation'].get()
+        g_or_abc = (f"{consts['G']:g}" if equation == 'Linear' else
+                    f"{consts['A']:g},{consts['B']:g},{consts['C']:g}")
+        meta = (f"# cell={cell['name']} "
+                f"columns={'+'.join(self._active_g_cols(cell))} "
+                f"mode={cell['input_mode'].get()} eq={equation} "
+                f"R0={consts['R0']:g} G_or_ABC={g_or_abc} "
+                f"dropped={','.join(cell['dropped']) or 'none'} "
+                f"started={datetime.now().isoformat(timespec='seconds')}")
+        fh = open(path, 'w', newline='', encoding='utf-8')
+        fh.write(meta + '\n')
+        writer = csv.writer(fh)
+        writer.writerow(['Timestamp', 'Elapsed_s', 'R1_digits', 'Load_lbf'])
+        fh.flush()
+        cell['rec_fh'], cell['rec_writer'] = fh, writer
+        cell['rec_path'] = str(path)
+        cell['rec_origin'] = None
+        cell['rec_status'].set(f"Recording → {path}")
+        if cell['rec_btn'] is not None and not cell['rec_btn'].winfo_ismapped():
+            cell['rec_btn'].pack(side=tk.RIGHT, padx=(0, 8))
+
+    def _close_recording(self, cell: dict):
+        try:
+            if cell['rec_fh'] is not None:
+                cell['rec_fh'].flush()
+                cell['rec_fh'].close()
+        except Exception:
+            traceback.print_exc(file=sys.stderr)
+        cell['rec_fh'] = None
+        cell['rec_writer'] = None
+
+    def _on_rec_toggle(self, name: str):
+        cell = self.cells[name]
+        if cell['rec_fh'] is not None:                       # STOP
+            self._close_recording(cell)
+            cell['rec_status'].set(f"Saved: {cell['rec_path']}")
+            cell['rec_btn'].config(text='GO', bg='#16A34A',
+                                   activebackground='#15803D')
+        else:                                                # GO
+            try:
+                self._open_recording(cell)
+            except Exception as e:
+                cell['rec_status'].set(f"Could not open recording: {e}")
+                return
+            cell['rec_btn'].config(text='STOP', bg=C['btn_danger'],
+                                   activebackground='#B91C1C')
+
+    def _record_row(self, cell: dict, t, r1, load):
+        """Append one computed reading to the cell's open recording file."""
+        if cell['rec_origin'] is None:
+            cell['rec_origin'] = t
+        elapsed = round((t - cell['rec_origin']).total_seconds(), 3)
+        try:
+            cell['rec_writer'].writerow([
+                t.strftime('%Y-%m-%d %H:%M:%S'), elapsed,
+                '' if r1 is None else f"{float(r1):.4f}",
+                f"{float(load):.4f}"])
+            cell['rec_fh'].flush()
+        except Exception:
+            # The recording is the test record — a dying file must be loud.
+            traceback.print_exc(file=sys.stderr)
+            self.win.title("Vibrating-Wire Live Monitor — LOG WRITE FAILED")
+
     # ── Live tick ──────────────────────────────────────────────────────────────
 
     def _tick(self):
@@ -1021,8 +1264,6 @@ class VWLiveMonitor:
                 self._update_cell(name)
             except Exception as e:
                 self.cells[name]['status'].set(f"Error: {e}")
-
-        self._log_row()
 
         self.win.after(self.POLL_MS, self._tick)
 
@@ -1036,8 +1277,12 @@ class VWLiveMonitor:
             cell['status'].set('No data yet')
             return
 
-        g_cols = [v.get() for v in cell['g_vars']]
-        if any((not c) or c in ('RECORD', 'TIMESTAMP') for c in g_cols):
+        g_cols = self._active_g_cols(cell)
+        # Wires dropped by the calibration check leave their slot empty on
+        # purpose; otherwise every slot must be filled.
+        required = max(3 - len(cell['dropped']), 1)
+        if (len(g_cols) < required
+                or any(c in ('RECORD', 'TIMESTAMP') for c in g_cols)):
             # An empty slot or a non-measurement column must never reach
             # vw_compute: averaging RECORD into R1 once produced a
             # plausible-looking but garbage live load during a real test.
@@ -1045,7 +1290,7 @@ class VWLiveMonitor:
             if cell['readout_label'] is not None:
                 cell['readout_label'].config(fg=C['btn_danger'])
             cell['status'].set('Gauge column unset or non-measurement — '
-                               'pick 3 gauge columns')
+                               f'pick {required} gauge columns')
             return
         if any(c not in df.columns for c in g_cols):
             cell['status'].set('Pick 3 valid gauge columns')
@@ -1079,12 +1324,14 @@ class VWLiveMonitor:
             latest_r1 = float(r1_val) if pd.notna(r1_val) else latest_r1
             latest_load = float(load_val)
             new_count += 1
+            if cell['rec_writer'] is not None:
+                self._record_row(cell, t,
+                                 r1_val if pd.notna(r1_val) else None,
+                                 load_val)
 
         if new_count:
             cell['last_ts'] = max(t for t in [cell['last_ts'], ts.max()]
                                   if t is not None)
-            self._last_log[name]['r1'] = latest_r1
-            self._last_log[name]['load'] = latest_load
 
         self._draw_cell(name)
 
@@ -1132,85 +1379,398 @@ class VWLiveMonitor:
             pass
         cell['canvas'].draw()
 
-    # ── CSV logging ────────────────────────────────────────────────────────────
-
-    def _ensure_log(self):
-        """Open the per-tick CSV log lazily in a VW_Logs folder next to the
-        first enabled cell's .dat file."""
-        if self._log_writer is not None:
-            return True
-
-        base = None
-        for name in ('A', 'B'):
-            cell = self.cells[name]
-            if cell['enable'].get() and cell['path']:
-                base = Path(cell['path']).parent
-                break
-        if base is None:
-            return False
-
-        try:
-            log_dir = base / 'VW_Logs'
-            log_dir.mkdir(parents=True, exist_ok=True)
-            path = log_dir / f"vw_live_log_{self._session_tag}.csv"
-            new_file = not path.exists()
-            self._log_fh = open(path, 'a', newline='', encoding='utf-8')
-            self._log_writer = csv.writer(self._log_fh)
-            self._log_dir = log_dir
-            if new_file:
-                self._log_writer.writerow(
-                    ['Timestamp', 'Elapsed_s', 'CellA_R1_digits', 'CellA_Load_lbf',
-                     'CellB_R1_digits', 'CellB_Load_lbf'])
-                self._log_fh.flush()
-            return True
-        except Exception:
-            self._log_writer = None
-            return False
-
-    def _log_row(self):
-        """Write one row per tick. Each cell contributes its latest computed
-        value (carry-forward); a cell that has produced nothing logs blank."""
-        if not (self.cells['A']['enable'].get() or self.cells['B']['enable'].get()):
-            return
-        if not self._ensure_log():
-            return
-
-        # Record the start time when the log is created (Start). The first row
-        # is written in the same tick, so its Elapsed_s is exactly 0.0.
-        now = datetime.now()
-        if self._log_start is None:
-            self._log_start = now
-        elapsed = round((now - self._log_start).total_seconds(), 3)
-
-        def fmt(v):
-            return '' if v is None else f"{v:.4f}"
-
-        a, b = self._last_log['A'], self._last_log['B']
-        try:
-            self._log_writer.writerow([
-                now.strftime('%Y-%m-%d %H:%M:%S'),
-                elapsed,
-                fmt(a['r1']), fmt(a['load']),
-                fmt(b['r1']), fmt(b['load']),
-            ])
-            self._log_fh.flush()
-        except Exception:
-            # The CSV log is the test record — a dying log must be loud.
-            # Warning stays in the title until the window is reopened.
-            traceback.print_exc(file=sys.stderr)
-            self.win.title("Vibrating-Wire Live Monitor — LOG WRITE FAILED")
-
     # ── Lifecycle ──────────────────────────────────────────────────────────────
 
     def _on_close(self):
+        for cell in self.cells.values():
+            self._close_recording(cell)
+        self.win.destroy()
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Calibration test window (pre-test wire health check)
+# ──────────────────────────────────────────────────────────────────────────────
+
+class VWCalibrationWindow:
+    """
+    Modal pre-test wire health check — the RUN CELL(S) gate.
+
+    One section per cell with a watched .dat file. Each section captures N
+    fresh rows with the cell unloaded, then N fresh rows under an
+    operator-entered calibration load, and judges every wire's digit drop
+    against the expected W/|G| (vw_evaluate_wires). Resolution — all-pass
+    Continue, Ignore, wires dropped, or the risk popup's Ignore — arms the
+    monitor so the next RUN CELL(S) press starts recording.
+    """
+
+    CAPTURE_POLL_MS = 500    # the .dat grows every ~2 s; poll faster
+    CAPTURE_TIMEOUT_S = 6.0  # abort a capture when no new row for this long
+
+    def __init__(self, monitor: 'VWLiveMonitor'):
+        self.monitor = monitor
+        self.win = tk.Toplevel(monitor.win)
+        self.win.title("Calibration test")
+        self.win.configure(bg=C['bg'])
+        self.win.transient(monitor.win)
         try:
-            if self._log_fh is not None:
-                self._log_fh.close()
+            self.win.geometry(monitor.win.winfo_geometry())  # cover monitor
         except Exception:
             pass
-        self._log_fh = None
-        self._log_writer = None
+        self.win.grab_set()
+        self.win.protocol("WM_DELETE_WINDOW", self._on_close_attempt)
+
+        tk.Label(self.win, text="Calibration test — verify every wire "
+                 "responds to a known load before recording",
+                 bg=C['bg'], fg=C['text'],
+                 font=('Segoe UI', 11, 'bold')).pack(padx=12, pady=(10, 4))
+
+        self.sections = {}
+        for name in ('A', 'B'):
+            if monitor.cells[name]['path']:
+                self._build_section(name)
+
+    # ── UI construction ────────────────────────────────────────────────────────
+
+    def _build_section(self, name: str):
+        cell = self.monitor.cells[name]
+        frame = tk.LabelFrame(
+            self.win, text=f"Cell {name} — {Path(cell['path']).name}",
+            bg=C['panel'], fg=C['accent'], font=('Segoe UI', 10, 'bold'),
+            padx=8, pady=6)
+        frame.pack(fill=tk.X, padx=12, pady=6)
+
+        sec = {
+            'load_var': tk.StringVar(value=''),
+            'n_var':    tk.StringVar(value='10'),
+            'prog_var': tk.StringVar(value=''),
+            'msg_var':  tk.StringVar(
+                value='Leave the cell unloaded, then capture a baseline.'),
+            'baseline': None,      # col -> [digit samples]
+            'loaded':   None,
+            'cap_cols': None,      # wire order fixed at baseline capture
+            'capture':  None,      # in-flight capture state
+        }
+
+        row = tk.Frame(frame, bg=C['panel'])
+        row.pack(fill=tk.X)
+        tk.Label(row, text="Calibration load (lbf)", bg=C['panel'],
+                 fg=C['text'], font=('Segoe UI', 9)).pack(side=tk.LEFT)
+        tk.Entry(row, textvariable=sec['load_var'], width=10,
+                 font=('Segoe UI', 9)).pack(side=tk.LEFT, padx=(4, 12))
+        tk.Label(row, text="Sample size", bg=C['panel'], fg=C['text'],
+                 font=('Segoe UI', 9)).pack(side=tk.LEFT)
+        tk.Entry(row, textvariable=sec['n_var'], width=5,
+                 font=('Segoe UI', 9)).pack(side=tk.LEFT, padx=4)
+        tk.Label(row, textvariable=sec['prog_var'], bg=C['panel'],
+                 fg=C['accent'], font=('Segoe UI', 9, 'bold')
+                 ).pack(side=tk.RIGHT)
+
+        btns = tk.Frame(frame, bg=C['panel'])
+        btns.pack(fill=tk.X, pady=(4, 0))
+        sec['btn_base'] = self.monitor._btn(
+            btns, "Capture baseline",
+            lambda: self._start_capture(name, 'baseline'), 'primary')
+        sec['btn_base'].pack(side=tk.LEFT)
+        sec['btn_load'] = self.monitor._btn(
+            btns, "Capture loaded",
+            lambda: self._start_capture(name, 'loaded'), 'normal')
+        sec['btn_load'].pack(side=tk.LEFT, padx=8)
+        sec['btn_load'].config(state='disabled')
+
+        sec['msg_label'] = tk.Label(frame, textvariable=sec['msg_var'],
+                                    bg=C['panel'], fg=C['muted'],
+                                    font=('Segoe UI', 9), anchor='w',
+                                    wraplength=760, justify='left')
+        sec['msg_label'].pack(fill=tk.X, pady=(4, 0))
+
+        self.sections[name] = sec
+
+    def _msg(self, sec: dict, text: str, error: bool = False):
+        sec['msg_var'].set(text)
+        sec['msg_label'].config(fg=C['btn_danger'] if error else C['muted'])
+
+    # ── Two-phase capture driven by the live .dat ──────────────────────────────
+
+    def _start_capture(self, name: str, which: str):
+        cell = self.monitor.cells[name]
+        sec = self.sections[name]
+        if sec['capture'] is not None:
+            return
+        try:
+            n = int(float(sec['n_var'].get()))
+            if n < 1:
+                raise ValueError
+        except (ValueError, TypeError):
+            self._msg(sec, "Sample size must be a positive integer.", True)
+            return
+
+        if which == 'baseline':
+            cols = self.monitor._active_g_cols(cell)
+            if not cols or any(c in ('RECORD', 'TIMESTAMP') for c in cols):
+                self._msg(sec, "Pick valid gauge columns on the monitor "
+                               "first.", True)
+                return
+            sec['cap_cols'] = cols
+        cols = sec['cap_cols']
+        sec[which] = {c: [] for c in cols}
+
+        # New rows only: start from the newest timestamp already on disk.
+        try:
+            df = read_data_snapshot(cell['path'])
+            last_ts = (df['TIMESTAMP'].max()
+                       if df is not None and len(df)
+                       and 'TIMESTAMP' in df.columns else None)
+            if pd.isna(last_ts):
+                last_ts = None
+        except Exception:
+            last_ts = None
+
+        sec['capture'] = {
+            'which': which, 'n': n, 'got': 0, 'last_ts': last_ts,
+            'deadline': time.monotonic() + self.CAPTURE_TIMEOUT_S,
+        }
+        sec['btn_base'].config(state='disabled')
+        sec['btn_load'].config(state='disabled')
+        sec['prog_var'].set(f"0/{n}")
+        self._msg(sec, "Capturing baseline…" if which == 'baseline'
+                  else "Capturing loaded readings…")
+        self.win.after(self.CAPTURE_POLL_MS,
+                       lambda: self._poll_capture(name))
+
+    def _poll_capture(self, name: str):
+        if not self.win.winfo_exists():
+            return
+        cell = self.monitor.cells[name]
+        sec = self.sections[name]
+        cap = sec['capture']
+        if cap is None:
+            return
+
+        input_is_digits = (cell['input_mode'].get() == 'Digits')
+        try:
+            df = read_data_snapshot(cell['path'])
+        except Exception:
+            df = None
+
+        if df is not None and len(df) and 'TIMESTAMP' in df.columns:
+            samples = sec[cap['which']]
+            for i in range(len(df)):
+                if cap['got'] >= cap['n']:
+                    break
+                t = df['TIMESTAMP'].iloc[i]
+                if pd.isna(t):
+                    continue
+                if cap['last_ts'] is not None and t <= cap['last_ts']:
+                    continue
+                cap['last_ts'] = t
+                cap['deadline'] = (time.monotonic()
+                                   + self.CAPTURE_TIMEOUT_S)
+                try:
+                    vals = [float(pd.to_numeric(df[c].iloc[i]))
+                            for c in sec['cap_cols']]
+                except (KeyError, ValueError, TypeError):
+                    continue
+                if any(pd.isna(v) for v in vals):
+                    continue        # incomplete row: arrived, but unusable
+                for c, v in zip(sec['cap_cols'],
+                                vw_samples_to_digits(vals, input_is_digits)):
+                    samples[c].append(v)
+                cap['got'] += 1
+                sec['prog_var'].set(f"{cap['got']}/{cap['n']}")
+
+        if cap['got'] >= cap['n']:
+            which = cap['which']
+            sec['capture'] = None
+            sec['btn_base'].config(state='normal')
+            if which == 'baseline':
+                sec['btn_load'].config(state='normal')
+                self._msg(sec, "Apply the calibration load now, then press "
+                               "\"Capture loaded\".")
+            else:
+                sec['btn_load'].config(state='normal')
+                self._evaluate(name)
+            return
+
+        if time.monotonic() > cap['deadline']:
+            sec['capture'] = None
+            sec['btn_base'].config(state='normal')
+            if sec['baseline'] is not None and sec['cap_cols'] is not None \
+                    and all(sec['baseline'][c] for c in sec['cap_cols']):
+                sec['btn_load'].config(state='normal')
+            self._msg(sec, "No data arriving — is the collector running?",
+                      True)
+            return
+
+        self.win.after(self.CAPTURE_POLL_MS,
+                       lambda: self._poll_capture(name))
+
+    # ── Evaluation and results ─────────────────────────────────────────────────
+
+    def _evaluate(self, name: str):
+        cell = self.monitor.cells[name]
+        sec = self.sections[name]
+        try:
+            cal_load = float(sec['load_var'].get())
+            if cal_load == 0:
+                raise ValueError
+        except (ValueError, TypeError):
+            self._msg(sec, "Enter the applied calibration load (lbf) to "
+                           "evaluate.", True)
+            return
+        gauge_factor = self.monitor._consts(cell)['G']
+
+        expected = vw_expected_drop(cal_load, gauge_factor)
+        if expected < WIRE_MIN_EXPECTED_DIGITS:
+            if not messagebox.askyesno(
+                    "Calibration load too small",
+                    f"The expected per-wire drop at {cal_load:g} lbf is only "
+                    f"{expected:.1f} digits (< {WIRE_MIN_EXPECTED_DIGITS:g}) —"
+                    " too small to discriminate a faulty wire from noise.\n\n"
+                    "Evaluate anyway?", parent=self.win):
+                self._msg(sec, "Evaluation cancelled — apply a larger "
+                               "calibration load and re-capture.", True)
+                return
+
+        cols = sec['cap_cols']
+        results = vw_evaluate_wires(
+            [sec['baseline'][c] for c in cols],
+            [sec['loaded'][c] for c in cols],
+            cal_load, gauge_factor, allow_small=True)
+        self._show_results(name, cols, results, sec)
+
+    def _show_results(self, name: str, cols: list, results: list, sec: dict):
+        pop = tk.Toplevel(self.win)
+        pop.title(f"Cell {name} — wire check")
+        pop.configure(bg=C['bg'])
+        pop.transient(self.win)
+        pop.grab_set()
+        pop.protocol("WM_DELETE_WINDOW", lambda: None)  # resolve via buttons
+
+        bad = [i for i, r in enumerate(results) if r['bad']]
+        if not bad:
+            tk.Label(pop, text="All wires within tolerance",
+                     bg=C['bg'], fg=C['text'],
+                     font=('Segoe UI', 11, 'bold')).pack(padx=24, pady=(16, 8))
+            self.monitor._btn(pop, "Continue",
+                              lambda: self._finish_popup(pop, name),
+                              'primary').pack(pady=(0, 16))
+            return
+
+        tk.Label(pop, text=f"Cell {name}: wire(s) outside tolerance",
+                 bg=C['bg'], fg=C['btn_danger'],
+                 font=('Segoe UI', 11, 'bold')).pack(padx=24, pady=(16, 8))
+        note_var = tk.StringVar(value='')
+        drop_btns = {}
+        for i in bad:
+            row = tk.Frame(pop, bg=C['bg'])
+            row.pack(fill=tk.X, padx=24, pady=2)
+            tk.Label(row,
+                     text=f"{cols[i]} — deviation "
+                          f"{results[i]['deviation_pct']:+.1f}% "
+                          f"(Δ {results[i]['delta']:.1f} vs expected "
+                          f"{results[i]['expected']:.1f} digits)",
+                     bg=C['bg'], fg=C['text'],
+                     font=('Segoe UI', 9)).pack(side=tk.LEFT)
+            btn = self.monitor._btn(
+                row, "Drop wire",
+                lambda c=cols[i]: self._drop_wire(name, c, sec, note_var,
+                                                  drop_btns, resolve_btn),
+                'danger')
+            btn.pack(side=tk.RIGHT)
+            drop_btns[cols[i]] = btn
+
+        tk.Label(pop, textvariable=note_var, bg=C['bg'], fg=C['accent'],
+                 font=('Segoe UI', 9, 'bold')).pack(padx=24, pady=(6, 0))
+        resolve_btn = self.monitor._btn(
+            pop, "Ignore", lambda: self._finish_popup(pop, name), 'normal')
+        resolve_btn.pack(pady=(8, 16))
+
+    def _drop_wire(self, name: str, col: str, sec: dict, note_var,
+                   drop_btns: dict, resolve_btn):
+        cell = self.monitor.cells[name]
+        kept = [c for c in self.monitor._active_g_cols(cell) if c != col]
+        if not kept:
+            return          # never allow dropping the last remaining wire
+
+        # Atomic pair: (a) the cell's gauge columns become the remaining
+        # wires only; (b) R0 is re-zeroed to the mean of the remaining
+        # wires' just-captured baselines. R0 describes the baseline of the
+        # gauge mean being averaged — the old R0 was the 3-gauge mean's
+        # baseline, and a subset mean sits at a different baseline, so
+        # retaining the old R0 would bias every subsequent load reading.
+        for var in cell['g_vars']:
+            if var.get() == col:
+                var.set('')
+        cell['dropped'].append(col)
+        new_r0 = vw_rezero_r0([sec['baseline'][c] for c in kept])
+        cell['const_vars']['R0'].set(f"{new_r0:.4f}")
+        note_var.set(f"R0 re-zeroed for {len(kept)}-gauge mean "
+                     f"({new_r0:.4f})")
+        cell['status'].set(f"Dropped {col}; "
+                           f"R0 re-zeroed for {len(kept)}-gauge mean")
+
+        if col in drop_btns:
+            drop_btns[col].config(state='disabled')
+        if len(kept) <= 1:
+            for btn in drop_btns.values():
+                btn.config(state='disabled')
+        resolve_btn.config(text="Continue")
+
+    def _finish_popup(self, pop, name: str):
+        try:
+            pop.destroy()
+        except Exception:
+            pass
+        try:
+            self.win.grab_set()      # restore modality to the cal window
+        except Exception:
+            pass
+        self._msg(self.sections[name], "Resolved — close this window, then "
+                                       "press RUN CELL(S) to start recording.")
+        self.monitor._arm()
+
+    # ── Close / risk popup ─────────────────────────────────────────────────────
+
+    def _on_close_attempt(self):
+        if self.monitor._run_state != 'UNVERIFIED':
+            self._destroy()
+            return
+        pop = tk.Toplevel(self.win)
+        pop.title("Calibration test")
+        pop.configure(bg=C['bg'])
+        pop.transient(self.win)
+        pop.grab_set()
+        tk.Label(pop, text="Without calibration testing you may be factoring "
+                           "a faulty wire into your load calculations.",
+                 bg=C['bg'], fg=C['text'], font=('Segoe UI', 10),
+                 wraplength=380, justify='left').pack(padx=20, pady=(16, 12))
+        btns = tk.Frame(pop, bg=C['bg'])
+        btns.pack(fill=tk.X, padx=20, pady=(0, 14))
+
+        def back():
+            pop.destroy()
+            try:
+                self.win.grab_set()
+            except Exception:
+                pass
+
+        def ignore():
+            pop.destroy()
+            self._destroy()
+            self.monitor._arm()
+
+        self.monitor._btn(btns, "Run calibration", back, 'primary'
+                          ).pack(side=tk.LEFT)
+        self.monitor._btn(btns, "Ignore", ignore, 'danger'
+                          ).pack(side=tk.RIGHT)
+
+    def _destroy(self):
+        try:
+            self.win.grab_release()
+        except Exception:
+            pass
         self.win.destroy()
+        self.monitor._cal_win = None
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -2686,9 +3246,18 @@ VIBRATING-WIRE LIVE MONITOR
   tick Enable. The large readout shows the latest load (lbf) and each
   cell draws its own load-vs-time graph from its own file timestamps.
 
-  Updates run about every 2 seconds (≈0.5 Hz) by design. Each tick is
-  appended to vw_live_log_<timestamp>.csv inside a VW_Logs folder next
-  to the watched .dat file (Timestamp + each cell's R1 digits and load).
+  Updates run about every 2 seconds (≈0.5 Hz) by design.
+
+  Recording is gated by the red RUN CELL(S) button: the first press
+  opens the Calibration test window (a pre-test wire health check that
+  captures baseline and loaded readings and flags wires not responding
+  to a known load; bad wires can be dropped, re-zeroing R0). Once armed,
+  the next press starts a per-cell recording session written to
+  untitled_cell{A|B}_{NNN}.csv inside a VW_Logs folder next to each
+  watched .dat file (metadata line, then Timestamp, Elapsed_s,
+  R1_digits, Load_lbf). Each recording cell shows a red STOP button;
+  STOP closes the file and shows its path, GO resumes into the next-
+  numbered file. The live plot runs regardless of recording state.
 
 EXPORT
   Export CSV   — saves the current working view (post-chop) as CSV.
