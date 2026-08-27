@@ -543,6 +543,45 @@ def vw_rezero_r0(kept_baselines):
     return sum(wire_means) / len(wire_means)
 
 
+def vw_live_rezero_samples(df, cols, input_is_digits, after_ts, n):
+    """
+    Collect up to n complete rows strictly newer than after_ts from a
+    TOA5 DataFrame: returns ({col: [digit samples]}, newest_ts_seen).
+
+    Feeds vw_rezero_r0 for a MANUAL wire drop, where no just-captured
+    calibration baselines exist and R0 must be re-zeroed from live data.
+    Hz values are converted to digits. Rows with NaN in any requested
+    column are skipped entirely (a partial row must not skew the new
+    baseline) but still advance the returned timestamp watermark.
+    after_ts=None accepts all rows.
+    """
+    samples = {c: [] for c in cols}
+    last = after_ts
+    if df is None or len(df) == 0 or 'TIMESTAMP' not in df.columns:
+        return samples, last
+    got = 0
+    for i in range(len(df)):
+        if got >= n:
+            break
+        t = df['TIMESTAMP'].iloc[i]
+        if pd.isna(t):
+            continue
+        if after_ts is not None and t <= after_ts:
+            continue
+        if last is None or t > last:
+            last = t
+        try:
+            vals = [float(pd.to_numeric(df[c].iloc[i])) for c in cols]
+        except (KeyError, ValueError, TypeError):
+            continue
+        if any(pd.isna(v) for v in vals):
+            continue
+        for c, v in zip(cols, vw_samples_to_digits(vals, input_is_digits)):
+            samples[c].append(v)
+        got += 1
+    return samples, last
+
+
 def vw_next_recording_path(directory, cell_name):
     """
     Lowest-unused untitled_cell{X}_{NNN}.csv path in directory (scanned at
@@ -929,9 +968,16 @@ class VWLiveMonitor:
             'readout':    tk.StringVar(value='—'),
             'readout_label': None,   # set in _build_cell; recolored on error
             'status':     tk.StringVar(value='Disabled'),
-            # Wires dropped by the calibration wire check (column names).
-            # A dropped wire leaves its gauge slot empty on purpose.
+            # Wires dropped by the calibration wire check or the manual
+            # Drop buttons (column names). A dropped wire leaves its
+            # gauge slot empty on purpose.
             'dropped':    [],
+            'drop_btns':  [None, None, None],   # per-slot manual Drop
+            # Persistent per-cell note (drop/re-zero results): the tick
+            # loop rewrites 'status' every ~2 s, so warnings that must
+            # stay visible live here instead.
+            'note_var':   tk.StringVar(value=''),
+            'note_label': None,
             # Per-cell recording session (opened via the RUN CELL(S) gate)
             'rec_fh':     None,
             'rec_writer': None,
@@ -1019,7 +1065,17 @@ class VWLiveMonitor:
             cb = ttk.Combobox(grow, textvariable=cell['g_vars'][i],
                               values=[], state='readonly', width=10)
             cb.pack(side=tk.LEFT, padx=2)
+            cb.bind('<<ComboboxSelected>>',
+                    lambda e, n=name: self._update_drop_buttons(n))
             cell['g_combos'][i] = cb
+            btn = self._btn(grow, "Drop",
+                            lambda i=i: self._manual_drop(name, i),
+                            'normal', width=4)
+            btn.pack(side=tk.LEFT, padx=(0, 4))
+            btn.config(state='disabled')
+            cell['drop_btns'][i] = btn
+        self._btn(grow, "Undo drops", lambda: self._undo_drops(name),
+                  'normal').pack(side=tk.RIGHT)
 
         # Input units + equation toggles
         torow = tk.Frame(outer, bg=C['panel'])
@@ -1058,6 +1114,13 @@ class VWLiveMonitor:
                  font=('Segoe UI', 11)).pack(side=tk.LEFT, padx=(4, 0), pady=(10, 0))
         tk.Label(readrow, textvariable=cell['status'], bg=C['panel'],
                  fg=C['muted'], font=('Segoe UI', 8)).pack(side=tk.RIGHT)
+
+        # Persistent drop/re-zero note (not overwritten by the tick loop)
+        note = tk.Label(outer, textvariable=cell['note_var'], bg=C['panel'],
+                        fg=C['muted'], font=('Segoe UI', 8), anchor='w',
+                        wraplength=440, justify='left')
+        note.pack(fill=tk.X, padx=8)
+        cell['note_label'] = note
 
         # Recording status (file path of the active/last session)
         tk.Label(outer, textvariable=cell['rec_status'], bg=C['panel'],
@@ -1109,6 +1172,7 @@ class VWLiveMonitor:
             cell['g_vars'][i].set(defaults[i])
         if mode is not None:
             cell['input_mode'].set(mode)
+        self._update_drop_buttons(name)
 
     def _on_enable(self, name: str):
         cell = self.cells[name]
@@ -1133,6 +1197,110 @@ class VWLiveMonitor:
     def _active_g_cols(self, cell: dict) -> list:
         """Currently selected gauge columns (empty slots skipped)."""
         return [v.get() for v in cell['g_vars'] if v.get()]
+
+    # ── Manual wire drop ───────────────────────────────────────────────────────
+
+    def _set_note(self, cell: dict, text: str, error: bool = False):
+        cell['note_var'].set(text)
+        if cell['note_label'] is not None:
+            cell['note_label'].config(
+                fg=C['btn_danger'] if error else C['accent'])
+
+    def _update_drop_buttons(self, name: str):
+        """A manual drop must leave at least TWO wires: disable every
+        Drop button when it would leave only one (or the slot is empty)."""
+        cell = self.cells[name]
+        can_drop = len(self._active_g_cols(cell)) >= 3
+        for i, btn in enumerate(cell['drop_btns']):
+            if btn is None:
+                continue
+            ok = can_drop and bool(cell['g_vars'][i].get())
+            btn.config(state='normal' if ok else 'disabled')
+
+    def _manual_drop(self, name: str, slot: int):
+        """Drop a known-bad wire without a calibration check; R0 is
+        re-zeroed from the next 5 live rows of the remaining wires."""
+        cell = self.cells[name]
+        col = cell['g_vars'][slot].get()
+        if not col or not cell['path']:
+            return
+        if len(self._active_g_cols(cell)) < 3:
+            return          # a drop may never leave only one wire
+        if not messagebox.askyesno(
+                "Drop wire",
+                f"Drop this wire from Cell {name}? Load will be computed "
+                "from the remaining wires and R0 will be re-zeroed from "
+                "live data.", parent=self.win):
+            return
+
+        # Same mechanics as the calibration drop: empty the slot, record
+        # the column (also lands in recording metadata's dropped=).
+        cell['g_vars'][slot].set('')
+        cell['dropped'].append(col)
+        self._update_drop_buttons(name)
+
+        kept = self._active_g_cols(cell)
+        try:
+            df = read_data_snapshot(cell['path'])
+            last_ts = (df['TIMESTAMP'].max()
+                       if df is not None and len(df)
+                       and 'TIMESTAMP' in df.columns else None)
+            if pd.isna(last_ts):
+                last_ts = None
+        except Exception:
+            last_ts = None
+        state = {'kept': kept, 'n': 5,
+                 'samples': {c: [] for c in kept},
+                 'last_ts': last_ts,
+                 'deadline': time.monotonic() + 6.0}
+        self._set_note(cell, f"Dropped {col} — capturing live rows to "
+                             "re-zero R0…")
+        self.win.after(500, lambda: self._poll_manual_rezero(name, state))
+
+    def _poll_manual_rezero(self, name: str, state: dict):
+        if not self.win.winfo_exists():
+            return
+        cell = self.cells[name]
+        kept = state['kept']
+        got = len(state['samples'][kept[0]]) if kept else 0
+        try:
+            df = read_data_snapshot(cell['path'])
+        except Exception:
+            df = None
+        fresh, last = vw_live_rezero_samples(
+            df, kept, cell['input_mode'].get() == 'Digits',
+            state['last_ts'], state['n'] - got)
+        if last is not None and (state['last_ts'] is None
+                                 or last > state['last_ts']):
+            state['last_ts'] = last
+            state['deadline'] = time.monotonic() + 6.0
+        for c in kept:
+            state['samples'][c].extend(fresh[c])
+        got = len(state['samples'][kept[0]]) if kept else 0
+
+        if got >= state['n']:
+            new_r0 = vw_rezero_r0([state['samples'][c] for c in kept])
+            cell['const_vars']['R0'].set(f"{new_r0:.4f}")
+            self._set_note(cell, f"R0 re-zeroed for {len(kept)}-gauge "
+                                 f"mean (live) ({new_r0:.4f})")
+            return
+        if time.monotonic() > state['deadline']:
+            # Wire stays dropped; the stale R0 must NOT be reused quietly.
+            self._set_note(cell, "R0 NOT re-zeroed — no data; set R0 "
+                                 "manually before testing", error=True)
+            return
+        self.win.after(500, lambda: self._poll_manual_rezero(name, state))
+
+    def _undo_drops(self, name: str):
+        cell = self.cells[name]
+        cell['dropped'].clear()
+        defaults, mode = vw_auto_columns(cell['columns'])
+        for i, var in enumerate(cell['g_vars']):
+            var.set(defaults[i])
+        if mode is not None:
+            cell['input_mode'].set(mode)
+        self._set_note(cell, "R0 must be re-set", error=True)
+        self._update_drop_buttons(name)
 
     # ── RUN CELL(S) gate ───────────────────────────────────────────────────────
 
@@ -1706,8 +1874,9 @@ class VWCalibrationWindow:
         cell['const_vars']['R0'].set(f"{new_r0:.4f}")
         note_var.set(f"R0 re-zeroed for {len(kept)}-gauge mean "
                      f"({new_r0:.4f})")
-        cell['status'].set(f"Dropped {col}; "
-                           f"R0 re-zeroed for {len(kept)}-gauge mean")
+        self.monitor._set_note(cell, f"Dropped {col} — R0 re-zeroed for "
+                                     f"{len(kept)}-gauge mean")
+        self.monitor._update_drop_buttons(name)
 
         if col in drop_btns:
             drop_btns[col].config(state='disabled')

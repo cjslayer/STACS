@@ -159,3 +159,52 @@ def test_rezero_equals_mean_of_remaining_baselines():
 
 def test_rezero_single_remaining_wire():
     assert app.vw_rezero_r0([[7275.7, 7275.9]]) == pytest.approx(7275.8)
+
+
+# ------------------------------------------- manual-drop live re-zero
+
+import pandas as pd  # noqa: E402
+
+
+def live_df(start_s, values_by_col):
+    """TOA5-shaped frame: 2 s cadence timestamps + gauge columns."""
+    n = len(next(iter(values_by_col.values())))
+    ts = pd.to_datetime("2026-08-27 10:00:00") + pd.to_timedelta(
+        [start_s + 2 * i for i in range(n)], unit="s")
+    return pd.DataFrame({"TIMESTAMP": ts, **values_by_col})
+
+
+def test_live_rezero_collects_only_new_rows_up_to_n():
+    df = live_df(0, {"g2": [7338.0, 7338.2, 7338.4, 7338.6, 7338.8],
+                     "g3": [7275.0, 7275.2, 7275.4, 7275.6, 7275.8]})
+    after = df["TIMESTAMP"].iloc[1]          # first two rows already seen
+    samples, last = app.vw_live_rezero_samples(
+        df, ["g2", "g3"], True, after, 2)
+    assert samples["g2"] == [7338.4, 7338.6]
+    assert samples["g3"] == [7275.4, 7275.6]
+    assert last == df["TIMESTAMP"].iloc[3]   # watermark at last used row
+
+
+def test_live_rezero_skips_nan_rows_but_advances_watermark():
+    df = live_df(0, {"g2": [7338.0, float("nan"), 7338.4],
+                     "g3": [7275.0, 7275.2, 7275.4]})
+    samples, last = app.vw_live_rezero_samples(df, ["g2", "g3"], True,
+                                               None, 5)
+    assert samples["g2"] == [7338.0, 7338.4]     # NaN row contributed nothing
+    assert samples["g3"] == [7275.0, 7275.4]
+    assert last == df["TIMESTAMP"].iloc[2]
+
+
+def test_live_rezero_converts_hz_and_feeds_rezero_r0():
+    hz2, hz3 = math.sqrt(1000.0 * 7338.0), math.sqrt(1000.0 * 7275.0)
+    df = live_df(0, {"g2": [hz2, hz2], "g3": [hz3, hz3]})
+    samples, _ = app.vw_live_rezero_samples(df, ["g2", "g3"], False,
+                                            None, 2)
+    new_r0 = app.vw_rezero_r0([samples["g2"], samples["g3"]])
+    assert new_r0 == pytest.approx((7338.0 + 7275.0) / 2.0)
+
+
+def test_live_rezero_empty_frame_returns_nothing():
+    samples, last = app.vw_live_rezero_samples(None, ["g2"], True, None, 5)
+    assert samples == {"g2": []}
+    assert last is None
